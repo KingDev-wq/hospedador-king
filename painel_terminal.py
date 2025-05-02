@@ -1,7 +1,10 @@
 import os
 import subprocess
 import json
+import threading
+import requests
 from time import sleep
+from datetime import datetime
 
 ascii_art = r'''
    ____        _     _     _           
@@ -30,6 +33,16 @@ def salvar_config(config):
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=4)
 
+def enviar_log(linha):
+    if os.path.exists("webhook.txt"):
+        with open("webhook.txt", "r") as w:
+            url = w.read().strip()
+            if url.startswith("http"):
+                try:
+                    requests.post(url, json={"content": linha[:1900]})
+                except Exception as e:
+                    print(f"Erro ao enviar webhook: {e}")
+
 def listar_bots(config):
     print("\nBots disponíveis:")
     for i, nome in enumerate(config, 1):
@@ -47,7 +60,9 @@ def iniciar_bot(config):
     caminho = config[nome]
     if nome in processos:
         print("Esse bot já está em execução.")
+        sleep(1)
         return
+
     print(f"Iniciando bot '{nome}'...")
     processos[nome] = subprocess.Popen(
         ["python", caminho],
@@ -56,23 +71,14 @@ def iniciar_bot(config):
         stderr=subprocess.STDOUT,
         text=True
     )
-    import threading
-    import requests
-
-    def enviar_log(linha):
-        if os.path.exists("webhook.txt"):
-            with open("webhook.txt", "r") as w:
-                url = w.read().strip()
-                if url.startswith("http"):
-                    try:
-                        requests.post(url, json={"content": linha[:1900]})
-                    except:
-                        pass
 
     def monitorar_output(proc, nome):
         for linha in proc.stdout:
-            print(f"[{nome}] {linha}", end="")
-            enviar_log(f"[{nome}] {linha}")
+            if linha.strip():
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                log = f"[{timestamp}] [{nome}] {linha.strip()}"
+                print(log)
+                enviar_log(log)
 
     threading.Thread(target=monitorar_output, args=(processos[nome], nome), daemon=True).start()
     sleep(1)
@@ -97,6 +103,9 @@ def parar_bot():
     sleep(1)
 
 def reiniciar_bot(config):
+    if not processos:
+        print("Nenhum bot em execução.")
+        return
     parar_bot()
     iniciar_bot(config)
 
@@ -113,9 +122,18 @@ def adicionar_bot(config):
     os.system(f"git clone {repo} {pasta_destino}")
     arquivo_principal = input("Digite o nome do arquivo principal do bot (ex: main.py): ").strip()
     caminho = os.path.join(pasta_destino, arquivo_principal)
+
+    # Espera o arquivo aparecer por até 10 segundos
+    espera = 0
+    while not os.path.exists(caminho) and espera < 10:
+        print("Aguardando o repositório terminar de baixar...")
+        sleep(1)
+        espera += 1
+
     if not os.path.exists(caminho):
-        print("Arquivo principal não encontrado. Verifique o nome.")
+        print("Arquivo principal não encontrado. Verifique o nome e se o repositório foi clonado corretamente.")
         return
+
     config[nome] = caminho
     salvar_config(config)
     print(f"Bot '{nome}' adicionado com sucesso.")
